@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>UtiliConta</title>
-<meta name="utiliconta-version" content="2026-07-30-04">
+<meta name="utiliconta-version" content="2026-07-30-05">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -172,6 +172,30 @@
     box-shadow:0 0 0 2000px rgba(0,0,0,.35);
   }
   .cam-btn-row{display:flex;gap:8px;margin-top:10px;}
+  .zoom-control{
+    display:none;
+    align-items:center;
+    justify-content:center;
+    gap:14px;
+    margin-top:10px;
+  }
+  .zoom-control.show{display:flex;}
+  .zoom-control button{
+    width:38px;height:38px;
+    border:1px solid var(--gray-border);
+    background:var(--white);
+    border-radius:50%;
+    font-size:18px;
+    font-weight:700;
+    color:var(--black);
+    cursor:pointer;
+  }
+  .zoom-control span{
+    font-size:12px;
+    color:var(--gray-text);
+    min-width:70px;
+    text-align:center;
+  }
   .cam-msg{
     font-size:13px;color:var(--gray-text);margin-top:8px;line-height:1.4;
   }
@@ -473,6 +497,11 @@
     </div>
     <div class="cam-btn-row">
       <button class="primary" id="btn-cam-toggle" style="margin-top:0;">Ligar câmera</button>
+    </div>
+    <div class="zoom-control" id="zoom-control">
+      <button type="button" id="zoom-minus">−</button>
+      <span id="zoom-label">Zoom</span>
+      <button type="button" id="zoom-plus">+</button>
     </div>
     <div class="cam-msg" id="cam-msg">Aponte a câmera para o código de barras. No modo "Somar 1 automático", cada leitura soma 1 unidade. No modo "Perguntar quantidade", cada leitura abre uma caixa para você digitar a quantidade.</div>
     <div class="last-scan" id="last-scan"></div>
@@ -909,6 +938,99 @@
 
   var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
 
+  // ---------- Camera zoom / focus enhancement ----------
+  // Phones with multiple rear cameras often default facingMode:"environment" to the
+  // ultra-wide lens, which makes barcodes tiny and hard to decode. We nudge the zoom
+  // in a bit automatically and expose manual +/- controls when the phone supports it.
+  var zoomControl = document.getElementById("zoom-control");
+  var zoomLabel = document.getElementById("zoom-label");
+  var zoomTrack = null;
+  var zoomCaps = null;
+  var zoomStep = 0;
+  var zoomCurrent = 0;
+
+  function resetZoomUI(){
+    zoomControl.classList.remove("show");
+    zoomTrack = null;
+    zoomCaps = null;
+  }
+
+  function applyZoom(value){
+    if(!zoomTrack || !zoomCaps) return;
+    value = Math.min(zoomCaps.max, Math.max(zoomCaps.min, value));
+    zoomTrack.applyConstraints({ advanced: [{ zoom: value }] }).then(function(){
+      zoomCurrent = value;
+      zoomLabel.textContent = "Zoom " + value.toFixed(1) + "x";
+    }).catch(function(){});
+  }
+
+  function enhanceCameraTrack(){
+    try{
+      var video = scannerContainer.querySelector("video");
+      if(!video || !video.srcObject || !video.srcObject.getVideoTracks) return;
+      var track = video.srcObject.getVideoTracks()[0];
+      if(!track || typeof track.getCapabilities !== "function") return;
+      var caps = track.getCapabilities();
+
+      var advanced = [];
+      if(caps.focusMode && caps.focusMode.indexOf("continuous") !== -1){
+        advanced.push({ focusMode: "continuous" });
+      }
+
+      if(caps.zoom && typeof caps.zoom.min === "number" && typeof caps.zoom.max === "number" && caps.zoom.max > caps.zoom.min){
+        zoomTrack = track;
+        zoomCaps = caps.zoom;
+        zoomStep = (caps.zoom.max - caps.zoom.min) / 10 || 0.1;
+        // start a bit zoomed in — counters the ultra-wide default on multi-camera phones
+        var target = caps.zoom.min + (caps.zoom.max - caps.zoom.min) * 0.3;
+        advanced.push({ zoom: target });
+        zoomCurrent = target;
+        zoomLabel.textContent = "Zoom " + target.toFixed(1) + "x";
+        zoomControl.classList.add("show");
+      } else {
+        resetZoomUI();
+      }
+
+      if(advanced.length){
+        track.applyConstraints({ advanced: advanced }).catch(function(){});
+      }
+    }catch(e){ /* not all phones expose these APIs — fail silently */ }
+  }
+
+  document.getElementById("zoom-minus").addEventListener("click", function(){
+    applyZoom(zoomCurrent - zoomStep);
+  });
+  document.getElementById("zoom-plus").addEventListener("click", function(){
+    applyZoom(zoomCurrent + zoomStep);
+  });
+
+  // ---------- Beep on successful read ----------
+  var audioCtx = null;
+  function ensureAudioContext(){
+    if(!audioCtx){
+      try{ audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }catch(e){}
+    }
+    if(audioCtx && audioCtx.state === "suspended"){
+      audioCtx.resume().catch(function(){});
+    }
+  }
+  function playBeep(){
+    if(!audioCtx) return;
+    try{
+      var osc = audioCtx.createOscillator();
+      var gain = audioCtx.createGain();
+      osc.type = "sine";
+      osc.frequency.value = 1046.5;
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      var now = audioCtx.currentTime;
+      gain.gain.setValueAtTime(0.18, now);
+      gain.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+      osc.start(now);
+      osc.stop(now + 0.13);
+    }catch(e){}
+  }
+
   function startCamera(){
     if(!quaggaAvailable()){
       camMsg.textContent = "Não foi possível carregar o leitor de código de barras (sem conexão com a internet). Verifique sua conexão ou use a aba Manual.";
@@ -933,8 +1055,8 @@
         target: scannerContainer,
         constraints: {
           facingMode: "environment",
-          width: { ideal: 640 },
-          height: { ideal: 480 }
+          width: { ideal: 1280 },
+          height: { ideal: 720 }
         }
       },
       locator: { patchSize: "medium", halfSample: true },
@@ -968,6 +1090,7 @@
       cameraOn = true;
       btnCamToggle.textContent = "Desligar câmera";
       camMsg.textContent = "Câmera ligada. Aponte para o código de barras dentro da área marcada.";
+      setTimeout(enhanceCameraTrack, 400);
     });
 
     Quagga.onDetected(onBarcodeDetected);
@@ -985,6 +1108,7 @@
     cameraOn = false;
     candidateCode = null;
     candidateCount = 0;
+    resetZoomUI();
     btnCamToggle.textContent = "Ligar câmera";
     applyScanModeUI();
   }
@@ -992,6 +1116,7 @@
   btnCamToggle.addEventListener("click", function(){
     if(cameraOn){ stopCamera(); return; }
     if(!requireSessionName()) return;
+    ensureAudioContext();
     startCamera();
   });
 
@@ -1030,6 +1155,8 @@
     if(code === lastScanCode && (now - lastScanTime) < 1800) return;
     lastScanTime = now;
     lastScanCode = code;
+
+    playBeep();
 
     if(scanMode === "auto"){
       addOrIncrement(code, 1);
@@ -1222,7 +1349,7 @@
   });
 
   // ---------- Update check ----------
-  var APP_VERSION = "2026-07-30-04"; // bump this (and the <meta utiliconta-version> tag) on every release
+  var APP_VERSION = "2026-07-30-05"; // bump this (and the <meta utiliconta-version> tag) on every release
   var updateBanner = document.getElementById("update-banner");
   var updateCheckInFlight = false;
 
