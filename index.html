@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>UtiliScan</title>
-<meta name="utiliconta-version" content="2026-07-30-06">
+<meta name="utiliconta-version" content="2026-07-30-07">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -558,7 +558,7 @@
     <div class="voice-hint" id="voice-hint"></div>
     <div class="field">
       <label for="m-code">Código</label>
-      <input type="text" id="m-code" placeholder="Ex: 7891234567890" inputmode="text">
+      <input type="text" id="m-code" placeholder="Ex: 7891234567890" inputmode="numeric">
     </div>
     <div class="field">
       <label for="m-qty">Quantidade</label>
@@ -945,6 +945,23 @@
   // ---------- Manual panel ----------
   var mCode = document.getElementById("m-code");
   var mQty = document.getElementById("m-qty");
+
+  function digitsOnly(value){
+    return value.replace(/\D/g, "");
+  }
+
+  // strip any non-digit character on every input — covers typing, pasting,
+  // and dictation (the iPhone's built-in keyboard mic types words as letters,
+  // not digits, so this is what actually keeps the fields numeric-only there)
+  mCode.addEventListener("input", function(){
+    var cleaned = digitsOnly(mCode.value);
+    if(cleaned !== mCode.value) mCode.value = cleaned;
+  });
+  mQty.addEventListener("input", function(){
+    var cleaned = digitsOnly(mQty.value);
+    if(cleaned !== mQty.value) mQty.value = cleaned;
+  });
+
   document.getElementById("m-qty-minus").addEventListener("click", function(){
     if(mQty.value === ""){ mQty.value = 1; return; }
     mQty.value = Math.max(1, (parseInt(mQty.value, 10) || 1) - 1);
@@ -1342,6 +1359,10 @@
   var qtyModal = document.getElementById("qty-modal");
   var modalCodeLabel = document.getElementById("modal-code-label");
   var modalQtyInput = document.getElementById("modal-qty");
+  modalQtyInput.addEventListener("input", function(){
+    var cleaned = digitsOnly(modalQtyInput.value);
+    if(cleaned !== modalQtyInput.value) modalQtyInput.value = cleaned;
+  });
 
   function openQtyModal(code){
     modalCodeLabel.textContent = "Código: " + code;
@@ -1512,7 +1533,7 @@
   });
 
   // ---------- Update check ----------
-  var APP_VERSION = "2026-07-30-06"; // bump this (and the <meta utiliconta-version> tag) on every release
+  var APP_VERSION = "2026-07-30-07"; // bump this (and the <meta utiliconta-version> tag) on every release
   var updateBanner = document.getElementById("update-banner");
   var updateCheckInFlight = false;
 
