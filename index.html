@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>UtiliConta</title>
-<meta name="utiliconta-version" content="2026-07-30-05">
+<title>UtiliScan</title>
+<meta name="utiliconta-version" content="2026-07-30-06">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -172,6 +172,22 @@
     box-shadow:0 0 0 2000px rgba(0,0,0,.35);
   }
   .cam-btn-row{display:flex;gap:8px;margin-top:10px;}
+  .cam-btn-row .primary{flex:1;margin-top:0;}
+  .flash-btn{
+    display:none;
+    flex:0 0 auto;
+    width:52px;
+    border:1px solid var(--gray-border);
+    background:var(--white);
+    border-radius:6px;
+    font-size:20px;
+    cursor:pointer;
+  }
+  .flash-btn.show{display:block;}
+  .flash-btn.active{
+    background:var(--red);
+    border-color:var(--red);
+  }
   .zoom-control{
     display:none;
     align-items:center;
@@ -210,6 +226,34 @@
   }
   .last-scan.show{display:block;}
   .last-scan b{color:var(--green);}
+
+  .voice-btn{
+    display:none;
+    width:100%;
+    padding:12px;
+    background:var(--white);
+    color:var(--red);
+    border:2px solid var(--red);
+    border-radius:6px;
+    font-size:14px;
+    font-weight:700;
+    cursor:pointer;
+    margin-bottom:12px;
+  }
+  .voice-btn.show{display:block;}
+  .voice-btn.listening{
+    background:var(--red);
+    color:var(--white);
+  }
+  .voice-hint{
+    display:none;
+    font-size:12px;
+    color:var(--gray-text);
+    margin-bottom:12px;
+    text-align:center;
+    line-height:1.4;
+  }
+  .voice-hint.show{display:block;}
 
   /* Manual panel */
   .field{margin-bottom:10px;}
@@ -467,7 +511,7 @@
 
   <header>
     <div class="brand-text">
-      <h1>UtiliConta</h1>
+      <h1>UtiliScan</h1>
       <span class="tagline">Aplicativo de contagens</span>
     </div>
     <div class="logo-chip">
@@ -497,6 +541,7 @@
     </div>
     <div class="cam-btn-row">
       <button class="primary" id="btn-cam-toggle" style="margin-top:0;">Ligar câmera</button>
+      <button type="button" class="flash-btn" id="btn-flash-toggle">💡</button>
     </div>
     <div class="zoom-control" id="zoom-control">
       <button type="button" id="zoom-minus">−</button>
@@ -509,6 +554,8 @@
 
   <!-- MANUAL PANEL -->
   <div class="panel" id="panel-manual">
+    <button type="button" class="voice-btn" id="btn-voice" style="display:none;">🎤 Falar código e quantidade</button>
+    <div class="voice-hint" id="voice-hint"></div>
     <div class="field">
       <label for="m-code">Código</label>
       <input type="text" id="m-code" placeholder="Ex: 7891234567890" inputmode="text">
@@ -926,6 +973,90 @@
     mCode.focus();
   });
 
+  // ---------- Voice input (speak code and quantity) ----------
+  var SpeechRecognitionImpl = window.SpeechRecognition || window.webkitSpeechRecognition;
+  var voiceBtn = document.getElementById("btn-voice");
+  var voiceHint = document.getElementById("voice-hint");
+  var voiceRecognition = null;
+  var voiceListening = false;
+
+  function processVoiceTranscript(transcript){
+    var digitGroups = transcript.match(/\d+/g) || [];
+    var lower = transcript.toLowerCase();
+    var code = "", qty = null;
+
+    if(lower.indexOf("quantidade") !== -1){
+      var parts = lower.split("quantidade");
+      var codeDigits = (parts[0].match(/\d+/g) || []).join("");
+      var qtyDigits = (parts[1] ? (parts[1].match(/\d+/g) || []) : []).join("");
+      if(codeDigits) code = codeDigits;
+      if(qtyDigits) qty = parseInt(qtyDigits, 10);
+    } else if(digitGroups.length >= 2){
+      code = digitGroups.slice(0, -1).join("");
+      qty = parseInt(digitGroups[digitGroups.length - 1], 10);
+    } else if(digitGroups.length === 1){
+      code = digitGroups[0];
+    }
+
+    if(code) mCode.value = code;
+    if(qty && qty > 0) mQty.value = qty;
+
+    if(code && qty){
+      showToast("Entendi: código " + code + ", quantidade " + qty + ". Confira e toque em Adicionar.");
+    } else if(code){
+      showToast("Entendi o código " + code + ". Preencha a quantidade manualmente.");
+      mQty.focus();
+    } else {
+      showToast("Não consegui identificar números na fala. Tente falar só os números, ou digite manualmente.");
+    }
+  }
+
+  if(SpeechRecognitionImpl){
+    voiceBtn.classList.add("show");
+    voiceRecognition = new SpeechRecognitionImpl();
+    voiceRecognition.lang = "pt-BR";
+    voiceRecognition.interimResults = false;
+    voiceRecognition.maxAlternatives = 1;
+
+    voiceRecognition.onresult = function(event){
+      var transcript = event.results[0][0].transcript;
+      processVoiceTranscript(transcript);
+    };
+    voiceRecognition.onerror = function(event){
+      voiceListening = false;
+      voiceBtn.classList.remove("listening");
+      voiceBtn.textContent = "🎤 Falar código e quantidade";
+      if(event.error !== "aborted" && event.error !== "no-speech"){
+        showToast("Não entendi. Tente novamente ou digite manualmente.");
+      }
+    };
+    voiceRecognition.onend = function(){
+      voiceListening = false;
+      voiceBtn.classList.remove("listening");
+      voiceBtn.textContent = "🎤 Falar código e quantidade";
+    };
+
+    voiceBtn.addEventListener("click", function(){
+      if(!requireSessionName()) return;
+      if(voiceListening){
+        voiceRecognition.stop();
+        return;
+      }
+      try{
+        voiceListening = true;
+        voiceBtn.classList.add("listening");
+        voiceBtn.textContent = "🎙️ Ouvindo... (toque para parar)";
+        voiceRecognition.start();
+      }catch(e){
+        voiceListening = false;
+        voiceBtn.classList.remove("listening");
+      }
+    });
+  } else {
+    voiceHint.classList.add("show");
+    voiceHint.textContent = "Este navegador não tem o botão de voz integrado, mas você pode tocar no ícone de microfone do teclado ao preencher os campos abaixo para ditar por voz.";
+  }
+
   // ---------- Camera / barcode scanning ----------
   var scannerContainer = document.getElementById("scanner-container");
   var camMsg = document.getElementById("cam-msg");
@@ -949,10 +1080,21 @@
   var zoomStep = 0;
   var zoomCurrent = 0;
 
+  var flashBtn = document.getElementById("btn-flash-toggle");
+  var flashTrack = null;
+  var flashOn = false;
+
   function resetZoomUI(){
     zoomControl.classList.remove("show");
     zoomTrack = null;
     zoomCaps = null;
+  }
+
+  function resetFlashUI(){
+    flashBtn.classList.remove("show");
+    flashBtn.classList.remove("active");
+    flashTrack = null;
+    flashOn = false;
   }
 
   function applyZoom(value){
@@ -991,6 +1133,15 @@
         resetZoomUI();
       }
 
+      if(caps.torch){
+        flashTrack = track;
+        flashOn = false;
+        flashBtn.classList.remove("active");
+        flashBtn.classList.add("show");
+      } else {
+        resetFlashUI();
+      }
+
       if(advanced.length){
         track.applyConstraints({ advanced: advanced }).catch(function(){});
       }
@@ -1002,6 +1153,17 @@
   });
   document.getElementById("zoom-plus").addEventListener("click", function(){
     applyZoom(zoomCurrent + zoomStep);
+  });
+
+  flashBtn.addEventListener("click", function(){
+    if(!flashTrack) return;
+    var next = !flashOn;
+    flashTrack.applyConstraints({ advanced: [{ torch: next }] }).then(function(){
+      flashOn = next;
+      flashBtn.classList.toggle("active", flashOn);
+    }).catch(function(){
+      showToast("Não foi possível controlar o flash neste aparelho.");
+    });
   });
 
   // ---------- Beep on successful read ----------
@@ -1109,6 +1271,7 @@
     candidateCode = null;
     candidateCount = 0;
     resetZoomUI();
+    resetFlashUI();
     btnCamToggle.textContent = "Ligar câmera";
     applyScanModeUI();
   }
@@ -1349,7 +1512,7 @@
   });
 
   // ---------- Update check ----------
-  var APP_VERSION = "2026-07-30-05"; // bump this (and the <meta utiliconta-version> tag) on every release
+  var APP_VERSION = "2026-07-30-06"; // bump this (and the <meta utiliconta-version> tag) on every release
   var updateBanner = document.getElementById("update-banner");
   var updateCheckInFlight = false;
 
