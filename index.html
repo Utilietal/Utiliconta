@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <title>UtiliConta</title>
-<meta name="utiliconta-version" content="2026-07-30-01">
+<meta name="utiliconta-version" content="2026-07-30-03">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quagga/0.12.1/quagga.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <style>
@@ -907,6 +907,8 @@
     return typeof window.Quagga !== "undefined";
   }
 
+  var isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) && !window.MSStream;
+
   function startCamera(){
     if(!quaggaAvailable()){
       camMsg.textContent = "Não foi possível carregar o leitor de código de barras (sem conexão com a internet). Verifique sua conexão ou use a aba Manual.";
@@ -936,8 +938,10 @@
         }
       },
       locator: { patchSize: "medium", halfSample: true },
-      numOfWorkers: 2,
-      frequency: 8,
+      // Web Workers are unreliable/slow inside iOS Safari & Chrome-on-iOS (both run on WKWebView) —
+      // running Quagga on the main thread is faster there in practice.
+      numOfWorkers: isIOS ? 0 : 2,
+      frequency: isIOS ? 12 : 8,
       decoder: {
         readers: [
           "ean_reader",
@@ -991,12 +995,12 @@
 
   var candidateCode = null;
   var candidateCount = 0;
-  var REQUIRED_MATCHES = 3; // same code must be read this many times in a row before it's accepted
-  var MAX_AVG_ERROR = 0.12; // Quagga's own confidence score per decoded digit; lower is stricter
+  var REQUIRED_MATCHES = 2; // same code must be read this many times in a row before it's accepted
+  var MAX_AVG_ERROR = 0.20; // Quagga's own confidence score per decoded digit; lower is stricter
 
   function averageDecodeError(result){
     var codes = result.codeResult && result.codeResult.decodedCodes;
-    if(!codes || !codes.length) return 1;
+    if(!codes || !codes.length) return 0; // no confidence data available — don't block on it
     var errors = [];
     codes.forEach(function(c){
       if(typeof c.error === "number") errors.push(c.error);
@@ -1233,7 +1237,7 @@
   });
 
   // ---------- Update check ----------
-  var APP_VERSION = "2026-07-30-01"; // bump this (and the <meta utiliconta-version> tag) on every release
+  var APP_VERSION = "2026-07-30-03"; // bump this (and the <meta utiliconta-version> tag) on every release
   var updateBanner = document.getElementById("update-banner");
   var updateCheckInFlight = false;
 
